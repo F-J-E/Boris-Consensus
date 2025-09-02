@@ -1,0 +1,163 @@
+from __future__ import annotations
+import os, sys, logging
+import time, random, requests
+import pandas as pd
+
+from utils import load_cfg, setup_logger, now_str, ensure_dir
+from indicators import add_indicators
+from consensus import indicator_signals, consensus_from_signals
+
+
+def load_tickers(path: str) -> list[str]:
+    with open(path, "r") as f:
+        lines = [ln.strip() for ln in f.readlines() if ln.strip() and not ln.strip().startswith("#")]
+    seen, out = set(), []
+    for t in lines:
+        if t not in seen:
+            out.append(t)
+            seen.add(t)
+    return out
+
+
+def fetch_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    """
+    Fetch daily OHLCV from Finnhub instead of Yahoo.
+    Only supports daily interval (1d).
+    """
+    if interval != "1d":
+        raise RuntimeError("Finnhub fetcher is daily-only (interval=1d)")
+
+    # Parse period like '365d' -> days
+    days = 365
+    try:
+        if period.endswith("d"):
+            days = int(period[:-1])
+    except Exception:
+        pass
+
+    to_ts = int(time.time())
+    from_ts = to_ts - days * 24 * 3600
+
+    # Read API key from config
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = load_cfg(os.path.join(root, "config.yaml"))
+    api_key = cfg.get("finnhub", {}).get("api_key", "")
+    if not api_key:
+        raise RuntimeError("Missing Finnhub API key")
+
+    url = "https://finnhub.io/api/v1/stock/candle"
+    params = {"symbol": ticker, "resolution": "D", "from": from_ts, "to": to_ts, "token": api_key}
+
+    attempts, last_err = 4, None
+    for i in range(attempts):
+        try:
+            r = requests.get(url, params=params, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("s") == "ok":
+                df = pd.DataFrame({
+                    "date": pd.to_datetime(pd.Series(data["t"]), unit="s"),
+                    "open": data["o"],
+                    "high": data["h"],
+                    "low":  data["l"],
+                    "close": data["c"],
+                    "volume": data["v"],
+                })
+                if not df.empty:
+                    return df
+            elif data.get("s") == "no_data":
+                raise RuntimeError(f"No data for {ticker}")
+            last_err = RuntimeError(f"Finnhub error for {ticker}: {data.get('s')}")
+        except Exception as e:
+            last_err = e
+        # backoff with jitter
+        time.sleep(1.0 + i * 1.2 + random.random() * 0.4)
+
+    raise RuntimeError(f"No data for {ticker}") from last_err
+
+
+def scan_ticker(ticker: str, cfg: dict) -> dict | None:
+    try:
+        df = fetch_history(ticker, cfg["period"], cfg["interval"])
+        if len(df) < cfg.get("min_rows", 200):
+            logging.warning(f"{ticker}: insufficient rows {len(df)} < {cfg.get('min_rows',200)}")
+            return None
+        df = add_indicators(df, cfg)
+        last = df.iloc[-1]
+        sigs = indicator_signals(last, cfg)
+        label, buys, sells = consensus_from_signals(sigs, cfg)
+        return {
+            "ticker": ticker,
+            "timestamp": last["date"].strftime("%Y-%m-%d"),
+            "close": round(float(last["close"]), 4),
+            "keltner": sigs.get("keltner", "NA"),
+            "supertrend": sigs.get("supertrend", "NA"),
+            "rsi": sigs.get("rsi", "NA"),
+            "psar": sigs.get("psar", "NA"),
+            "macd": sigs.get("macd", "NA"),
+            "buys": buys,
+            "sells": sells,
+            "consensus": label,
+        }
+    except Exception as e:
+        logging.exception(f"{ticker}: scan failed: {e}")
+        return None
+
+
+def export_csv(rows: list[dict], path: str):
+    cols = ["ticker","timestamp","close","keltner","supertrend","rsi","psar","macd","buys","sells","consensus"]
+    pd.DataFrame(rows, columns=cols if rows else cols).to_csv(path, index=False)
+
+
+def main():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = load_cfg(os.path.join(root, "config.yaml"))
+    setup_logger(cfg.get("log_level", "INFO"))
+
+    tzname = cfg.get("timezone", "Europe/Zurich")
+    logging.info(f"Starting Boris daily scan @ {now_str(tzname)}")
+
+    tickers = load_tickers(os.path.join(root, "tickers.csv"))
+    logging.info(f"Tickers: {len(tickers)}")
+
+    results = []
+    for t in tickers:
+        r = scan_ticker(t, cfg)
+        if r:
+            results.append(r)
+        time.sleep(0.4)  # gentle pacing
+
+    outdir = cfg.get("output_dir", ".")
+    ensure_dir(outdir)
+
+    full_path = os.path.join(outdir, "boris_signals.csv")
+    export_csv(results, full_path)
+    logging.info(f"Wrote {full_path} ({len(results)} rows)")
+
+    def tier_score(label: str) -> int:
+        l = (label or "").upper()
+        if "DIAMOND" in l: return 3
+        if "STRONG" in l: return 2
+        if "GOOD" in l: return 1
+        return 0
+
+    tier = cfg.get("alerts_min_consensus", "strong").lower()
+    min_needed = {"good":1, "strong":2, "diamond":3}.get(tier, 2)
+    alerts = [r for r in results if tier_score(r.get("consensus","")) >= min_needed]
+
+    alerts_path = os.path.join(outdir, "boris_alerts.csv")
+    export_csv(alerts, alerts_path)
+    logging.info(f"Wrote {alerts_path} ({len(alerts)} rows)")
+
+    exit_code = 0
+    if any("DIAMOND" in (r.get("consensus","")) for r in alerts):
+        exit_code = 2
+    elif any("STRONG" in (r.get("consensus","")) for r in alerts):
+        exit_code = 1
+
+    logging.info(f"Done. Exit code hint = {exit_code}")
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

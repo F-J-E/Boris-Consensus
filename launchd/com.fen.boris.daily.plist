@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.fen.boris.daily</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>-lc</string>
+      <string>cd /PATH/TO/boris && ./run_boris.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/PATH/TO/boris</string>
+    <key>StandardOutPath</key>
+    <string>/PATH/TO/boris/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/PATH/TO/boris/launchd.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>PATH</key>
+      <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <array>
+      <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+      <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>30</integer></dict>
+      <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key><false/>
+    </dict>
+  </dict>
+</plist>

@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+
+# Logs and temporary files
+*.log
+*.csv
+
+# Configs (keep local only)
+config.yaml
+
+# macOS junk
+.DS_Store
+
+.venv/
+__pycache__/
+*.log
+*.csv
+config.yaml
