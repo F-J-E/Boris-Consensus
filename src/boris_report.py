@@ -172,7 +172,17 @@ def to_html(df: pd.DataFrame, path_html: str):
       <div class="brand">
         <div class="logo">B</div>
         <div>
-          <div class="title">Boris Consensus Alerts</div>
+          <div class="title" style="display:flex;align-items:center;justify-content:space-between;">
+  <span>Boris Consensus Alerts</span>
+  <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=https://f-j-e.github.io/Boris-Consensus/" 
+       alt="QR Code" style="width:60px;height:60px;border-radius:8px;opacity:.9;">
+</div>
+
+  <a href="boris_qr.png" title="Scan to open this page">
+    <img src="boris_qr.png" alt="QR" style="width:56px;height:56px;border-radius:8px;opacity:.9;">
+  </a>
+</div>
+
           <div class="meta">Europe/Zurich · strongest first · {now}</div>
         </div>
       </div>
